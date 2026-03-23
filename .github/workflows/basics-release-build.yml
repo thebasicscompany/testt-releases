@@ -1,0 +1,92 @@
+name: Basics signed release build
+
+# Triggered only by Basics gateway after "Request release" security scan (non-high risk).
+# Signing secrets live on this org-owned repo, not the customer's private app repo.
+on:
+  workflow_dispatch:
+    inputs:
+      installation_id:
+        description: Customer GitHub App installation id (for traceability; token uses owner/repo below)
+        required: true
+        type: string
+      customer_repo:
+        description: owner/basics-os-slug
+        required: true
+        type: string
+      sha:
+        description: Commit SHA to build
+        required: true
+        type: string
+      tag_name:
+        description: Version tag label (for traceability)
+        required: true
+        type: string
+      vite_api_url:
+        description: Backend URL baked into the desktop build
+        required: true
+        type: string
+
+concurrency:
+  group: basics-release-${{ github.event.inputs.customer_repo }}-${{ github.event.inputs.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      # create-github-app-token@v1 does NOT accept installation-id as input; without owner/repos it
+      # defaults to THIS repo (thebasicscompany/*-releases) and cannot read the customer's private repo.
+      - name: Parse customer_repo (owner + name)
+        id: customer
+        shell: bash
+        run: |
+          full='${{ github.event.inputs.customer_repo }}'
+          if [[ "$full" != */* ]]; then
+            echo "::error::customer_repo must be owner/repo (e.g. imcertain101/basics-os-slug)"
+            exit 1
+          fi
+          echo "owner=${full%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${full#*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub App token (read customer private repo)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.HOSTING_GITHUB_APP_ID }}
+          private-key: ${{ secrets.HOSTING_GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ steps.customer.outputs.owner }}
+          repositories: ${{ steps.customer.outputs.name }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.customer_repo }}
+          ref: ${{ github.event.inputs.sha }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and publish (electron-builder → this repository)
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+          VITE_API_URL: ${{ github.event.inputs.vite_api_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm build:electron && pnpm exec electron-builder --publish always
