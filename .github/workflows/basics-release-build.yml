@@ -80,6 +80,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build and publish (electron-builder → this repository)
+        shell: bash
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
           VITE_API_URL: ${{ github.event.inputs.vite_api_url }}
@@ -89,4 +90,4 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm build:electron && pnpm exec electron-builder --publish always
+        run: pnpm build:electron && pnpm exec electron-builder --publish always -c.publish.releaseType=release
